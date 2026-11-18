@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>缓存 TTL · 追踪一次菜单读取</title>
+<style>
+:root{color-scheme:light;--ink:#202634;--muted:#627286;--line:#dedfe6;--indigo:#574bcd;--orange:#b45b26;--wash:#f8f8fc;--mono:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;font:16px/1.5 Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:white}
+*{box-sizing:border-box}body{margin:0}button,input{font:inherit}button{cursor:pointer}a{color:inherit}button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #6959dd;outline-offset:4px}
+.shell{max-width:1500px;margin:auto;padding:0 clamp(18px,4.8vw,82px)} .bar{border-bottom:1px solid var(--line)}.bar .shell{height:56px;display:flex;align-items:center;gap:26px}.brand{display:flex;align-items:center;gap:10px;font-weight:760;letter-spacing:-.04em}.brand svg{width:31px;height:25px}.bar nav{display:flex;align-items:center;gap:19px;margin-left:auto;font-size:13px;color:#575e72}.bar nav a{text-decoration:none}.bar nav a:hover{text-decoration:underline}
+h1,h2,p{margin:0}.hero{padding:clamp(20px,3.6vh,38px) 0 20px}.hero h1{font-size:clamp(25px,2.6vw,42px);font-weight:700;letter-spacing:-.055em;line-height:1.22}.hero p{margin-top:9px;color:#545c70;font-size:15px}.toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px 23px;padding:12px 0;border-block:1px solid var(--line)}.setting{display:flex;align-items:center;gap:14px;font-size:14px;font-weight:630}.setting output{font:600 16px var(--mono);color:var(--indigo);min-width:4ch}.setting input{accent-color:var(--indigo);width:clamp(100px,13vw,200px);cursor:pointer}.toolbar button{border:1px solid #dcdce8;background:white;color:#414758;min-height:34px;border-radius:7px;padding:4px 11px;font-size:13px}.toolbar .variant{color:var(--indigo);border-color:#c6c0ed;background:#f7f6ff}.toolbar .run{margin-left:auto;display:inline-flex;align-items:center;gap:7px}.run svg{width:13px;height:13px}.toolbar button:hover{background:#f1f0fa}
+.figure{margin:0;position:relative}.diagram{display:block;width:100%;height:auto;overflow:visible;font-family:inherit}.diagram text{fill:var(--ink);pointer-events:none;dominant-baseline:middle}.diagram .small{font-size:12px;fill:#636a7d}.diagram .section{font-size:16px;font-weight:680}.diagram .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}.diagram .bold{font-weight:650}.diagram .source-focus path,.diagram .source-focus ellipse{stroke:#b45b26;stroke-width:3}.diagram .cache-focus .target{stroke:#7564d2!important;stroke-width:2.8!important}.diagram .wire{fill:none;stroke-linecap:round;stroke-linejoin:round}.diagram .action{cursor:pointer;outline:none}.diagram .action:focus-visible .target{stroke:var(--indigo);stroke-width:3}.diagram .action:hover .target{stroke:var(--indigo)}.diagram .paper{fill:#fff;stroke:#cfccdF;stroke-width:1.25}.diagram .routeLabel{paint-order:stroke;stroke:#fff;stroke-width:5;stroke-linejoin:round}.diagram .control{fill:var(--indigo);font-size:12px;font-weight:630}.diagram .mainPrice{font-family:var(--mono);font-weight:570;letter-spacing:-.075em}.caption{display:flex;align-items:baseline;gap:16px;padding:12px 2px 18px;border-bottom:1px solid var(--line);font-size:15px}.caption strong{color:var(--indigo);white-space:nowrap;font:650 14px var(--mono)}.caption p{color:#4e5569}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(max-width:650px){.shell{padding:0 15px}.bar .shell{height:45px}.hero{padding:20px 0 14px}.hero p{font-size:13px}.toolbar{gap:8px;padding:9px 0}.setting{gap:9px}.setting input{width:84px}.toolbar button{padding:4px 8px;font-size:12px}.toolbar .run{margin-left:0}.caption{gap:8px;font-size:13px}.caption strong{font-size:12px}.bar nav{gap:14px}}
+</style></head><body>
+<header class="bar"><div class="shell"><strong class="brand"><svg viewBox="0 0 32 25" fill="none" aria-hidden="true"><path d="M2 8c8 0 9 9 17 9h11M2 13c7 0 9 4 17 4M2 20c8 0 10-3 17-3" stroke="#6658da" stroke-width="2.6" stroke-linecap="round"/><path d="M2 3c10 0 12 10 19 10h9" stroke="#bbb2fb" stroke-width="2.6" stroke-linecap="round"/></svg>缓存 TTL</strong><nav aria-label="页面导航"><a href="#experiment">读取路径</a><a href="#compare">时间对照</a></nav></div></header>
+<main class="shell"><section id="experiment" aria-labelledby="title"><header class="hero"><h1 id="title">菜单涨价了，为什么还能读到旧价？</h1><p>源站在第 6 秒从 10 元涨到 12 元。沿着一次读取，看价格从哪里回来。</p></header>
+<div class="toolbar"><label class="setting" for="ttl">缓存有效期 <input type="range" min="0" max="15" step="1" value="10" id="ttl"><output id="ttlNumber" for="ttl">10 s</output></label><button class="variant" id="variant">试试 8 秒</button><span id="hint" style="color:#645b80;font-size:12px">第 8 秒会读到新价吗？</span><button id="reset">恢复基线</button><button class="run" id="replay"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 2.5 9 5.5-9 5.5z" fill="#6557cc"/></svg>重放本次读取</button></div>
+<figure class="figure"><svg class="diagram" id="scene" width="1160" height="342" viewBox="0 0 1160 342" aria-label="菜单价格的数据流。选择读取时刻，点击缓存记录展开或收回过期时间轴。">
+<defs><linearGradient id="readFlow"><stop stop-color="#b2a7fa"/><stop offset="1" stop-color="#7364d9"/></linearGradient><linearGradient id="responseFlow"><stop stop-color="#8880e2"/><stop offset="1" stop-color="#c4baf6"/></linearGradient><pattern id="expiryPattern" patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(35)"><path d="M0 0v5" stroke="#c7cad3" stroke-width="1.3"/></pattern></defs>
+<g id="wires" aria-hidden="true"><g id="inWires"></g><path id="dbGo" class="wire"/><path id="dbBack" class="wire"/><path id="outWire" class="wire"/></g>
+<g id="requests" role="group" aria-label="选择读取时刻"><text id="reqHeading" class="section">读取请求</text><g id="rows"></g></g>
+<g id="sourceNode" aria-label="源站当前价格"><path id="sourceBody" fill="#fff5ec" stroke="#cc946c" stroke-width="1.4" d="M-65 0C-65-15 65-15 65 0V35C65 50-65 50-65 35Z"/><ellipse cx="0" cy="0" rx="65" ry="11" fill="#fff9f3" stroke="#cc946c" stroke-width="1.4"/><text text-anchor="middle" y="24" font-size="15" font-weight="670" id="sourceText"></text></g>
+<text id="goLabel" class="small routeLabel" text-anchor="middle">取价</text><text id="backLabel" class="small routeLabel" text-anchor="middle">写回</text>
+<g id="cacheNode" class="action" role="button" tabindex="0" aria-expanded="false" aria-label="展开缓存记录"><title>展开或收回这条缓存记录</title>
+<rect id="back2" fill="#eeedf9" stroke="#d8d5e8" rx="10"/><rect id="back1" fill="#f6f5fb" stroke="#d4d1e5" rx="10"/><rect id="face" class="paper target" rx="10" style="fill:#fcfbff;stroke:#aaa0de"/>
+<g id="recordHeader"><path d="M0 0h13M0 4h13M0 8h13" fill="none" stroke="#6f60c4" stroke-width="2" stroke-linecap="round"/><text x="22" y="4" class="section">缓存记录</text></g>
+<g id="expandControl"><circle r="9" fill="#f2efff" stroke="#b4abe4"/><path id="plus" d="M-4 0h8M0-4v8" fill="none" stroke="#6556c7" stroke-width="1.6"/><text x="-14" text-anchor="end" class="control" id="toggleText">展开</text></g>
+<g id="cachedValue"><text y="0" class="small mono">menu:price</text><text y="33" font-size="36" class="mainPrice" id="cachedPrice"></text></g>
+<g id="ruler" aria-hidden="true"><rect id="axisBase" rx="3" height="12" fill="url(#expiryPattern)"/><rect id="validZone" height="12" rx="3" fill="#d0c9f5"/><rect id="newZone" height="12" rx="3" fill="#e8ad7a"/><path id="expiresMark" fill="none" stroke="#7f778e" stroke-width="1.4" stroke-dasharray="2 3"/><g id="nowMark"><path d="M-4-5L0 0l4-5z" fill="#5a48c6"/><path d="M0 0v14" stroke="#6553cb" stroke-width="2"/></g>
+<g id="axisExtra"><g id="ticks"></g><g id="sourceTrace"><path id="compareGuide" stroke="#968bbd" stroke-width="1" stroke-dasharray="2 3"/><path id="sourceSeries" fill="none" stroke="#ce8652" stroke-width="2.4" stroke-linejoin="round"/><circle id="sourceDot" r="3.6" fill="#b9602b"/><text id="tracePrice" class="small mono" style="fill:#a0572b"></text><text id="changeTime" class="small" style="fill:#9c5d32"></text></g><text id="axisLeft" class="small mono"></text><text id="newEnd" class="small mono" text-anchor="end" style="fill:#a0572b"></text><text id="axisRight" class="small mono" text-anchor="end"></text><text id="nowLabel" class="small" text-anchor="middle" style="fill:#5644b5;font-weight:650"></text></g></g>
+<text id="sourceLegend" class="small" style="fill:#9c5d32">源站价格</text><text id="equation" font-size="14" fill="#514670" class="mono bold"></text><text id="recordState" class="small"></text></g>
+<g id="replyNode"><text class="section" id="replyLabel">返回价格</text><text class="mainPrice" y="51" font-size="48" id="returnPrice"></text><text y="87" class="small" id="returnSource"></text></g>
+<g id="packet" pointer-events="none" visibility="hidden"><circle r="10" fill="white" stroke="#8072d9" stroke-width="1.5"/><circle r="4.8" fill="#6656c9"/></g>
+</svg><figcaption class="caption" aria-live="polite"><strong id="captionTime"></strong><p id="captionText"></p></figcaption></figure></section><div id="compare"></div>
+<style>
+.ttl-history { --history-muted:#637083; --history-base:#778298; --history-current:#574bcd; --history-fetch:#a75422; color:var(--ink,#20273c); padding:28px 0 18px; }
+.ttl-history .history-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:10px 24px; }
+.ttl-history h2 { margin:0; font-size:clamp(18px,2.4vw,24px); letter-spacing:-.035em; }
+.ttl-history .history-caption { margin:5px 0 0; color:var(--history-muted); font-size:12px; }
+.ttl-history .history-key { display:flex; align-items:center; gap:17px; color:var(--history-muted); font-size:12px; }
+.ttl-history .history-key span { display:inline-flex; align-items:center; gap:6px; }
+.ttl-history .history-dot { display:inline-block; width:9px; height:9px; box-sizing:border-box; background:var(--history-current); border-radius:50%; }
+.ttl-history .history-diamond { display:inline-block; width:9px; height:9px; box-sizing:border-box; background:white; border:2px solid var(--history-fetch); transform:rotate(45deg); }
+.ttl-history .history-graph { display:grid; grid-template-columns:104px minmax(0,1fr); margin-top:17px; padding:0 24px 0 0; }
+.ttl-history .history-labels, .ttl-history .history-plot { height:193px; position:relative; }
+.ttl-history .history-labels { z-index:1; }
+.ttl-history .history-label { position:absolute; inset-inline-start:0; color:var(--history-base); font-size:13px; line-height:1.22; }
+.ttl-history .history-label b,.ttl-history .history-label small { display:block; }
+.ttl-history .history-label small { font-size:11px; font-variant-numeric:tabular-nums; margin-top:3px; }
+.ttl-history .history-label.base { top:59px; }
+.ttl-history .history-label.current { top:116px; color:var(--history-current); }
+.ttl-history .history-highlight { position:absolute; top:37px; bottom:9px; left:0; transform:translateX(-50%); width:42px; background:#f0edfc; border-radius:6px; transition:left .28s ease; pointer-events:none; }
+.ttl-history .history-origin { position:absolute; left:60%; top:1px; bottom:27px; width:1px; border-left:1px dashed #ce956d; pointer-events:none; }
+.ttl-history .history-origin span { position:absolute; top:0; left:0; transform:translateX(-50%); font-size:11px; color:#915021; background:white; white-space:nowrap; padding:1px 5px 4px; font-variant-numeric:tabular-nums; }
+.ttl-history .history-wires { display:block; position:absolute; inset:0; width:100%; height:193px; overflow:visible; pointer-events:none; }
+.ttl-history .history-wires path { fill:none; stroke-width:1.3; vector-effect:non-scaling-stroke; stroke-dasharray:3 4; }
+.ttl-history .history-wires .base { stroke:#aab2c2; }
+.ttl-history .history-wires .current { stroke:#a59bec; }
+.ttl-history .history-event { appearance:none; background:transparent; border:0; box-shadow:none; margin:0; padding:0; position:absolute; top:38px; bottom:6px; transform:translateX(-50%); width:42px; border-radius:6px; color:inherit; cursor:pointer; font:inherit; }
+.ttl-history .history-event:focus-visible { outline:2px solid var(--history-current); outline-offset:2px; }
+.ttl-history .history-event:hover { background:rgba(83,71,176,.055); }
+.ttl-history .history-point { position:absolute; left:50%; width:0; height:0; transition:top .25s ease; }
+.ttl-history .history-point i { position:absolute; left:-4.5px; top:-4.5px; width:9px; height:9px; }
+.ttl-history .history-point.base i.history-dot { background:var(--history-base); }
+.ttl-history .history-point b { position:absolute; bottom:8px; left:0; transform:translateX(-50%); font-size:13px; font-weight:600; letter-spacing:0; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.ttl-history .history-point.base b { color:#586577; }
+.ttl-history .history-point.current b { color:var(--history-current); }
+.ttl-history .history-tick { position:absolute; left:50%; bottom:3px; transform:translateX(-50%); font-size:11px; line-height:18px; padding:0 5px; white-space:nowrap; color:var(--history-muted); font-variant-numeric:tabular-nums; }
+.ttl-history .history-event[aria-pressed=true] .history-tick { background:var(--history-current); color:white; border-radius:4px; }
+@media(max-width:600px) {
+  .ttl-history .history-graph { grid-template-columns:70px minmax(0,1fr); padding-right:17px; }
+  .ttl-history .history-label { font-size:12px; }
+  .ttl-history .history-key { gap:13px; }
+  .ttl-history .history-highlight,.ttl-history .history-event { width:34px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .ttl-history .history-highlight,.ttl-history .history-point { transition:none; }
+}
+</style>
+<section class="ttl-history" aria-labelledby="history-title">
+  <div class="history-heading"><h2 id="history-title">对照每次读取</h2><div class="history-key" aria-label="图例"><span><i class="history-dot" aria-hidden="true"></i>缓存命中</span><span><i class="history-diamond" aria-hidden="true"></i>回源读取</span></div></div>
+  <p class="history-caption">连线保留上次读到的价格，点选时刻可查看读取路径。</p>
+  <div class="history-graph">
+    <div class="history-labels"><div class="history-label base"><b>基线</b><small>TTL 10 秒</small></div><div class="history-label current"><b>当前</b><small></small></div></div>
+    <div class="history-plot" role="group" aria-label="选择一次读取查看缓存路径">
+      <div class="history-highlight" aria-hidden="true"></div><div class="history-origin"><span>6 秒 · 源站涨价</span></div>
+      <svg viewBox="0 0 100 193" preserveAspectRatio="none" aria-hidden="true" class="history-wires"><path class="base"></path><path class="current"></path></svg>
+    </div>
+  </div>
+</section>
+<script>
+(() => {
+  const history = document.querySelector('.ttl-history');
+  const plot = history.querySelector('.history-plot');
+  const buttons = [];
+  let onSelect;
+
+  function heightAt(event, lane) {
+    return (lane === 'base' ? 89 : 146) - (event.price - 10) * 7;
+  }
+
+  function addEvent(index) {
+    const button = document.createElement('button');
+    button.className = 'history-event';
+    button.type = 'button';
+    button.innerHTML = '<span class="history-point base" aria-hidden="true"><i></i><b></b></span><span class="history-point current" aria-hidden="true"><i></i><b></b></span><span class="history-tick" aria-hidden="true"></span>';
+    button.addEventListener('click', () => onSelect(index));
+    button.addEventListener('keydown', event => {
+      if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+      event.preventDefault();
+      const next = Math.max(0,Math.min(buttons.length - 1,index + (event.key === 'ArrowRight' ? 1 : -1)));
+      buttons[next].focus();
+      onSelect(next);
+    });
+    plot.append(button);
+    buttons.push(button);
+  }
+
+  window.paintHistory = function (baseline, current, index, ttl, selectIndex) {
+    onSelect = selectIndex;
+    const span = current[current.length - 1].time;
+    const x = time => 100 * time / span;
+    while (buttons.length < current.length) addEvent(buttons.length);
+    history.querySelector('.history-label.current small').textContent = 'TTL ' + ttl + ' 秒';
+    history.querySelector('.history-highlight').style.left = x(current[index].time) + '%';
+    for (const [lane, events] of [['base', baseline], ['current', current]]) {
+      const points = events.map((event, i) => i === 0
+        ? 'M' + x(event.time) + ',' + heightAt(event, lane)
+        : 'H' + x(event.time) + 'V' + heightAt(event, lane));
+      history.querySelector('path.' + lane).setAttribute('d', points.join(' '));
+      events.forEach((event, i) => {
+        const point = buttons[i].querySelector('.history-point.' + lane);
+        point.style.top = (heightAt(event, lane) - 38) + 'px';
+        point.querySelector('i').className = event.hit ? 'history-dot' : 'history-diamond';
+        point.querySelector('b').textContent = '¥' + event.price;
+      });
+    }
+    const result = event => (event.hit ? '命中' : '回源') + event.price + '元';
+    current.forEach((event, i) => {
+      const button = buttons[i];
+      button.style.left = x(event.time) + '%';
+      button.setAttribute('aria-label','第' + event.time + '秒，基线' + result(baseline[i]) + '，当前' + result(event));
+      button.setAttribute('aria-pressed', String(i === index));
+      button.querySelector('.history-tick').textContent = event.time + ' 秒';
+    });
+  };
+})();
+</script>
+</main>
+<script>
+'use strict';
+const times = [0, 5, 8, 10];
+const el = id => document.getElementById(id);
+const attrs = (node, values) => { for (const [key,value] of Object.entries(values)) node.setAttribute(key,value); };
+const at = (id,x,y) => el(id).setAttribute('transform','translate('+x+' '+y+')');
+const put = (id,x,y) => attrs(el(id),{x,y});
+const write = (id,text) => { el(id).textContent=text; };
+const clamp = x => Math.max(0,Math.min(1,x));
+function simulate(ttl) {
+  let entry = null;
+  return times.map(time => {
+    const source = time < 6 ? 10 : 12;
+    const previous = entry;
+    const hit = previous !== null && time < previous.expires;
+    if (!hit) entry = {price:source,written:time,expires:time+ttl};
+    return {time,source,previous,hit,entry,price:entry.price};
+  });
+}
+const base = simulate(10);
+let ttl=10, index=2, events=base, openness=0, expanded=false;
+let morph=0, replay=0, replayStep=-1;
+const compact = matchMedia('(max-width:650px)');
+const still = matchMedia('(prefers-reduced-motion:reduce)');
+const ns = 'http://www.w3.org/2000/svg';
+function svg(tag,parent,values) {
+  const child=document.createElementNS(ns,tag);
+  attrs(child,values); parent.append(child); return child;
+}
+const requests=times.map((t,i)=>{
+  const row=svg('g',el('rows'),{class:'action',role:'button',tabindex:0,'aria-label':'查看第 '+t+' 秒的读取'});
+  const shape=svg('rect',row,{class:'target',rx:9,'stroke-width':1.1});
+  const time=svg('text',row,{'text-anchor':'middle',class:'mono bold','font-size':16});
+  time.textContent=t+' s';
+  const dot=svg('circle',row,{r:3.1});
+  const path=svg('path',el('inWires'),{class:'wire'});
+  row.addEventListener('click',()=>selectIndex(i));
+  row.addEventListener('keydown',e=>{
+    if (e.key==='Enter'||e.key===' ') {e.preventDefault();selectIndex(i);}
+    if (e.key==='ArrowRight'||e.key==='ArrowLeft') {
+      e.preventDefault(); const n=(i+(e.key==='ArrowRight'?1:3))%4;
+      selectIndex(n);requests[n].row.focus();
+    }
+  });
+  return {row,shape,time,dot,path};
+});
+const ticks=Array.from({length:18},()=>svg('line',el('ticks'),{y1:1,y2:11,stroke:'#fcfbff','stroke-width':1.2}));
+const directionMarks=['dbGo','dbBack'].map(()=>svg('path',el('wires'),{d:'M-4 -3.2L2 0l-6 3.2',fill:'none','stroke-width':1.6,'stroke-linejoin':'round'}));
+const flowLabel=svg('text',el('wires'),{class:'small routeLabel','text-anchor':'middle'});
+const replyPort=svg('circle',el('replyNode'),{r:3.4,fill:'#6556bc'});
+function wire(path,d,stroke,width,dash) {
+  attrs(path,{d,stroke,'stroke-width':width,'stroke-dasharray':dash||'none'});
+}
+function curve(x1,y1,x2,y2,vertical=false) {
+  const middle=vertical?(y1+y2)/2:(x1+x2)/2;
+  return 'M'+x1+' '+y1+(vertical?' C'+x1+' '+middle+' '+x2+' '+middle:' C'+middle+' '+y1+' '+middle+' '+y2)+' '+x2+' '+y2;
+}
+function draw() {
+  const m=compact.matches, p=openness, ev=events[index], old=ev.previous;
+  const W=m?392:1160, H=m?470:366;
+  attrs(el('scene'),{viewBox:'0 0 '+W+' '+H,width:W,height:H});
+  const x=m?64-55*p:379-134*p, y=m?134-22*p:76-26*p;
+  const w=m?256+117*p:238+225*p, h=132+76*p;
+  const right=x+w, bottom=y+h, portY=y+64+12*p, topPortX=x+w*.48;
+  const sx=m?96-2*p:695+54*p, sy=m?334+32*p:265+27*p;
+  const ox=m?258+10*p:900+67*p, oy=m?327+34*p:100+3*p;
+  const replyY=m?oy-13:oy+46;
+  put('reqHeading',m?8:20,m?20:29);
+  at('cacheNode',x,y);at('sourceNode',sx,sy);at('replyNode',ox,oy);
+  attrs(replyPort,{cx:m?23:-12,cy:m?-13:46});
+  for(const [id,shift] of [['back2',7],['back1',3.5],['face',0]]) attrs(el(id),{x:shift,y:shift,width:w,height:h});
+  at('recordHeader',17,22);at('expandControl',w-18,23);
+  at('cachedValue',17,54+4*p);
+  const ax=117+5*p, ay=77+2*p, aw=w-ax-17;
+  at('ruler',ax,ay);
+  const lo=old?old.written:ev.time, expiry=old?old.expires:lo, hi=Math.max(expiry,ev.time,lo+1);
+  const domain=Math.max(16,hi,ev.entry.expires)+1;
+  const xp=t=>aw*t/domain;
+  attrs(el('ruler'),{opacity:old?1:clamp((p-.45)/.55)});
+  attrs(el('axisBase'),{x:0,y:0,width:aw});attrs(el('validZone'),{x:xp(lo),y:0,width:Math.max(0,xp(expiry)-xp(lo))});
+  attrs(el('newZone'),{x:xp(ev.time),y:0,width:ev.hit?0:Math.max(0,xp(ev.entry.expires)-xp(ev.time))});
+  const ex=xp(expiry), now=xp(ev.time);
+  el('expiresMark').setAttribute('d','M'+ex+' -3v20');
+  at('nowMark',now,0);put('axisLeft',2,27);put('axisRight',ex,27);put('newEnd',xp(ev.entry.expires),27);
+  put('nowLabel',Math.max(25,Math.min(aw-25,now)),-16);
+  const detail=clamp((p-.55)/.45);
+  const cashY=t=>t<6?72:53;
+  const startY=cashY(0);
+  const crosses=domain>=6;
+  const stepX=xp(6);
+  const series='M0 '+startY+(crosses?' H'+stepX+' V53':'')+' H'+aw;
+  el('sourceSeries').setAttribute('d',series);
+  el('compareGuide').setAttribute('d','M'+now+' 15V'+cashY(ev.time));
+  attrs(el('sourceDot'),{cx:now,cy:cashY(ev.time)});
+  put('tracePrice',now>aw-38?now-8:now+7,cashY(ev.time)+13);
+  el('tracePrice').setAttribute('text-anchor',now>aw-38?'end':'start');
+  write('tracePrice','¥'+ev.source);
+  put('changeTime',stepX-4,45);el('changeTime').setAttribute('text-anchor','end');
+  write('changeTime',crosses?'6 s 涨价':'');
+  put('sourceLegend',17,ay+65);attrs(el('sourceLegend'),{opacity:detail});
+  ticks.forEach((mark,i)=>{const t=i+1;attrs(mark,{x1:xp(t),x2:xp(t),visibility:t<domain?'visible':'hidden'});});
+  attrs(el('equation'),{'aria-hidden':!expanded});
+  attrs(el('axisExtra'),{'aria-hidden':!expanded});
+  attrs(el('axisExtra'),{opacity:detail});attrs(el('equation'),{opacity:clamp((p-.83)/.17)});
+  put('equation',17,h-19);put('recordState',17,112+2*p);
+  write('axisLeft',(!ev.hit && ev.entry.expires<5)?'':'0 s');
+  write('axisRight',old && ex>55 && (ev.hit || xp(ev.entry.expires)-ex>75)?'到期 '+expiry+' s':'');
+  write('newEnd',ev.hit?'':('写回至 '+ev.entry.expires+' s'));
+  attrs(el('newEnd'),{'text-anchor':xp(ev.entry.expires)<90?'start':'end'});
+  write('nowLabel','读取 '+ev.time+' s');
+  write('equation',old?ev.time+' s '+(ev.hit?'<':'≥')+' '+expiry+' s  ·  '+(ev.hit?'有效，沿用缓存':'到期，写回 ¥'+ev.price):'空缓存  →  首次回源');
+  write('recordState',old?'读前 · 写入于 '+old.written+' s':'读取前没有记录');
+  write('cachedPrice',old?'¥'+old.price:'∅');
+  requests.forEach(({row,shape,time,dot,path},i)=>{
+    const active=i===index,rw=m?72:89, rh=m?34:36;
+    const rx=m?10+i*99:20,ry=m?46:57+i*51;
+    row.setAttribute('transform','translate('+rx+' '+ry+')');
+    attrs(row,{'aria-pressed':active});
+    attrs(shape,{width:rw,height:rh,fill:active?'#eeeaff':'#fff',stroke:active?'#9a8bec':'#dcdde6'});
+    attrs(time,{x:rw/2+3,y:rh/2+1,style:'fill:'+(active?'#5545b6':'#687084')});
+    attrs(dot,{cx:10,cy:rh/2,fill:active?'#7161d4':'#cfd0dc'});
+    const d=m?curve(rx+rw/2,ry+rh,topPortX,y,true):curve(rx+rw,ry+rh/2,x,portY);
+    wire(path,d,active?'url(#readFlow)':'#e5e5ee',active?6:2.1);
+  });
+  const outD=m?curve(right-43,bottom,ox+23,replyY,true):curve(right,portY,ox-12,replyY);
+  wire(el('outWire'),outD,ev.hit?'url(#responseFlow)':'#d59260',6);
+  // A miss leaves the cache, reads the origin, then writes the fresh record back.
+  const goD=m?curve(x+w*.20,bottom,sx-46,sy-7,true):curve(x+w*.48,bottom,sx-65,sy+20,true);
+  const backD=m?curve(sx+43,sy-7,x+w*.52,bottom,true):'M'+(sx+65)+' '+(sy+20)+' C'+(sx+123)+' '+(sy+18)+' '+(sx+91)+' '+(bottom+32)+' '+(sx+32)+' '+(bottom+32)+' S'+(right-20)+' '+(bottom+26)+' '+(right-20)+' '+bottom;
+  for(const [id,d] of [['dbGo',goD],['dbBack',backD]]) wire(el(id),d,ev.hit?'#bcbfcb':'#cc8959',ev.hit?1.7:3.6,ev.hit?'4 5':'');
+  directionMarks.forEach((mark,i)=>{
+    const path=el(i?'dbBack':'dbGo'), len=path.getTotalLength();
+    const a=path.getPointAtLength(len*.39), b=path.getPointAtLength(len*.39+1);
+    attrs(mark,{transform:'translate('+a.x+' '+a.y+') rotate('+Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI+')',stroke:ev.hit?'#9ea2ae':'#ad6738'});
+  });
+  put('goLabel',m?sx-47:(x+w*.48+sx-65)/2,m?sy-34:bottom+36);
+  put('backLabel',m?sx+71:sx+68,m?sy-29:bottom+24);
+  attrs(flowLabel,{x:m?ox+6:(right+ox)/2,y:m?replyY-41:portY-16});
+  flowLabel.textContent=ev.hit?'缓存命中':'回源后返回';
+  if(m)flowLabel.setAttribute('opacity',0);else flowLabel.setAttribute('opacity',1);
+  el('sourceNode').setAttribute('opacity',ev.hit?'.72':'1');
+  write('sourceText','源站  ¥'+ev.source);write('returnPrice','¥'+ev.price);
+  write('returnSource',ev.hit?'来自缓存':'本次回源');
+}
+function stopReplay(){
+  cancelAnimationFrame(replay);replayStep=-1;el('sourceNode').classList.remove('source-focus');el('cacheNode').classList.remove('cache-focus');el('packet').setAttribute('visibility','hidden');
+}
+function playRead() {
+  stopReplay();if(still.matches)return;
+  const ev=events[index];
+  const sequence=[requests[index].path,'cache'];
+  if(!ev.hit)sequence.push(el('dbGo'),'source',el('dbBack'),'cache');
+  sequence.push(el('outWire'));
+  const start=performance.now(),packet=el('packet');
+  function frame(t){
+    let passed=t-start,leg=0;
+    const duration=item=>typeof item==='string'?310:490;
+    while(leg<sequence.length && passed>=duration(sequence[leg])){passed-=duration(sequence[leg]);leg++;}
+    if(leg>=sequence.length){stopReplay();return;}
+    const item=sequence[leg],pause=typeof item==='string';
+    if(leg!==replayStep){
+      replayStep=leg;
+      el('cacheNode').classList.toggle('cache-focus',item==='cache');
+      el('sourceNode').classList.toggle('source-focus',item==='source');
+      packet.setAttribute('visibility',pause?'hidden':'visible');
+      packet.lastElementChild.setAttribute('fill',(item===el('dbGo')||item===el('dbBack'))?'#b45b26':'#6556c7');
+    }
+    if(!pause){const pos=item.getPointAtLength(item.getTotalLength()*clamp(passed/duration(item)));at('packet',pos.x,pos.y);}
+    replay=requestAnimationFrame(frame);
+  }
+  replay=requestAnimationFrame(frame);
+}
+function render(){
+  const ev=events[index],previous=ev.previous;el('hint').hidden=ttl!==10||index!==2;
+  el('ttl').value=ttl;el('ttl').setAttribute('aria-valuetext',ttl+' 秒');
+  write('ttlNumber',ttl+' s');write('captionTime','t = '+ev.time+' s');
+  let why=ev.hit?'缓存要到第 '+previous.expires+' 秒才过期，本次沿用第 '+previous.written+' 秒写入的 '+ev.price+' 元。':previous?'缓存于第 '+previous.expires+' 秒到期，本次从源站取回 '+ev.price+' 元，写回后到期时刻为第 '+ev.entry.expires+' 秒。':'第一次读取时缓存为空，从源站取回 '+ev.price+' 元并写入缓存。';
+  write('captionText',why);
+  draw();window.paintHistory(base,events,index,ttl,selectIndex);
+}
+function selectIndex(i){index=i;render();playRead();}
+function setTTL(value,play=true){stopReplay();ttl=value;events=simulate(ttl);render();if(play)playRead();}
+function setExpanded(value){
+  cancelAnimationFrame(morph);expanded=value;
+  const to=value?1:0,from=openness,start=performance.now();
+  el('cacheNode').setAttribute('aria-expanded',value);
+  el('cacheNode').setAttribute('aria-label',value?'收回缓存记录':'展开缓存记录');
+  write('toggleText',value?'收回':'展开');
+  el('plus').setAttribute('d',value?'M-4 0h8':'M-4 0h8M0-4v8');
+  if(still.matches||from===to){openness=to;draw();return;}
+  const duration=690*Math.max(.23,Math.abs(to-from));
+  function frame(t){
+    const u=clamp((t-start)/duration), eased=u*u*(3-2*u);
+    openness=from+(to-from)*eased;draw();
+    if(u<1)morph=requestAnimationFrame(frame);
+  }
+  morph=requestAnimationFrame(frame);
+}
+el('cacheNode').addEventListener('click',()=>setExpanded(!expanded));
+el('cacheNode').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setExpanded(!expanded);}});
+el('ttl').addEventListener('input',e=>setTTL(Number(e.target.value),false));
+el('ttl').addEventListener('change',playRead);
+el('variant').addEventListener('click',()=>{index=2;setTTL(8);});
+el('reset').addEventListener('click',()=>{index=2;setExpanded(false);setTTL(10,false);});
+el('replay').addEventListener('click',playRead);
+compact.addEventListener('change',draw);
+still.addEventListener('change',()=>{if(still.matches){stopReplay();setExpanded(expanded);}});
+render();
+</script></body></html>

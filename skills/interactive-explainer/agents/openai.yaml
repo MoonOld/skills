@@ -1,0 +1,4 @@
+interface:
+  display_name: "交互式讲解页"
+  short_description: "把系统画成可以原位展开的数据流图，让读者追踪一次变化并验证结果"
+  default_prompt: "用 $interactive-explainer 把这个系统做成一个交互式讲解页，让我能跟着一条输入，点开图中的组件，改变条件并看到结果。"
